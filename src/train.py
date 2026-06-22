@@ -1,38 +1,56 @@
 import os
 import yaml
 import joblib
-
+import json
+import pandas as pd
+import mlflow
+import mlflow.sklearn
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.datasets import load_iris
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 
+# Формируем абсолютные пути
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+db_path = os.path.join(BASE_DIR, "..", "mlflow.db")
+sqlite_uri = f"sqlite:///{db_path}"
+
+# Читаем URI сервера из переменных окружения, либо используем локальный SQLite
+tracking_uri = os.getenv("MLFLOW_TRACKING_URI", sqlite_uri)
+mlflow.set_tracking_uri(tracking_uri)
+
+# Задаем имя эксперимента
+mlflow.set_experiment("Iris_Classification")
 
 
 def train_model():
-    # Читаем параметры из конфига
     with open(os.path.join(BASE_DIR, "..", "params.yaml"), "r") as f:
         params = yaml.safe_load(f)["train"]
-
-    data = load_iris()
+    df = pd.read_csv(os.path.join(BASE_DIR, "..", "data", "iris.csv"))
+    X = df.drop("target", axis=1)
+    y = df["target"]
     X_train, X_test, y_train, y_test = train_test_split(
-        data.data, data.target, test_size=0.2, random_state=42
+        X, y, test_size=0.2, random_state=42
     )
 
-    # Инициализируем модель с параметрами из yaml
-    model = RandomForestClassifier(
-        n_estimators=params["n_estimators"],
-        max_depth=params["max_depth"],
-        random_state=42,
-    )
-    model.fit(X_train, y_train)
-
-    predictions = model.predict(X_test)
-    acc = accuracy_score(y_test, predictions)
-    print("Accuracy:", acc)
-    # Сохраняем артефакт (модель)
-    joblib.dump(model, os.path.join(BASE_DIR, "..", "models", "model.pkl"))
+    # Открываем сессию MLflow
+    with mlflow.start_run():
+        # Включаем автологирование для scikit-learn
+        mlflow.sklearn.autolog()
+        model = RandomForestClassifier(
+            n_estimators=params["n_estimators"],
+            max_depth=params["max_depth"],
+            random_state=42,
+        )
+        model.fit(X_train, y_train)
+        predictions = model.predict(X_test)
+        acc = accuracy_score(y_test, predictions)
+        # Сохраняем метрику для DVC
+        metrics_path = os.path.join(BASE_DIR, "..", "metrics.json")
+        with open(metrics_path, "w") as f:
+            json.dump({"accuracy": acc}, f)
+        # Сохраняем модель для DVC
+        joblib.dump(model, os.path.join(BASE_DIR, "..", "models", "model.pkl"))
+        print(f"Модель обучена. Accuracy: {acc}")
 
 
 if __name__ == "__main__":
