@@ -1,5 +1,4 @@
 name: Train and Report (CML)
-
 on:
   pull_request:
     branches: ["main"]
